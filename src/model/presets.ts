@@ -12,7 +12,7 @@ export const presets: PresetInfo[] = [
   {
     name: "Evan's 6-Bar Actuator",
     description:
-      "Evan's actual mechanism: a 6-bar linkage with two ground pivots and a central actuator. The actuator rotates to drive an output arm through a coupler network. Shows required input torque.",
+      "Evan's mechanism: 6-bar with 160° actuator input driving a long output arm through only 20° of motion (~8:1 reduction). Three ground pivots, short coupler network at top. Load on output arm tip.",
     factory: createEvans6Bar,
   },
   {
@@ -68,83 +68,80 @@ export const presets: PresetInfo[] = [
  *   Loop 2: O2 -> D -> C -> B        (output loop, B shared)
  */
 function createEvans6Bar(mass: number): Linkage {
-  // Evan's 6-bar actuator from CAD image:
-  // Two ground pivots, input actuator, drives an output arm through a coupler network.
+  // Evan's 6-bar actuator mechanism (from CAD).
   //
-  // Topology (Stephenson III - two coupled 4-bar loops):
-  //   Loop 1: O1 -> A -> B -> O3 (upper ground)
-  //   Loop 2: O2 -> D -> C -> B  (B shared between loops)
+  // Key constraints from Evan:
+  //   - Actuator arm (input) rotates 160° CCW from start to end
+  //   - Output arm (long bar) moves only 20° between extreme positions
+  //   - This gives ~8:1 reduction ratio
   //
-  // This ensures the solver can resolve:
-  //   1. A is known (input joint on O1)
-  //   2. B solvable from (A, drive) and (O3, link_O3B) — two circles
-  //   3. C solvable from (B, coupler) and (something)...
+  // Topology: Stephenson III with 3 ground pivots
+  //   O_act (actuator ground, orange circle in CAD)
+  //   O_upper (upper pivot, fixed to frame)
+  //   O_base (base pivot for output arm, fixed to frame)
   //
-  // Actually for the solver to work, each unknown needs 2 links to known joints.
-  // Let's use 3 ground pivots to make it solvable:
-  //   O1 (left, actuator ground), O2 (right, output ground), O3 (upper, constraint)
+  //   Loop 1 (actuator): O_act → A → B ← O_upper  (A is input)
+  //   Loop 2 (output):   O_base → D → C ← B       (C-D is output arm region)
   //
-  // From CAD: the mechanism has the actuator at bottom-center driving upward,
-  // with the output arm pivoting from the right ground to reach up.
+  // The long output arm (O_base → D) swings slowly while the actuator
+  // arm (O_act → A) sweeps through its full 160° range.
 
-  // Ground pivots
-  const O1x = 0, O1y = 0;     // actuator ground (left)
-  const O2x = 10, O2y = 0;    // output ground (right)
+  // Ground pivots — positioned to match CAD proportions (vertical mechanism)
+  // Actuator ground is at bottom-center, base pivot slightly right and below,
+  // upper pivot is above and left (where the constraint arm anchors)
+  const Oact = { x: 0, y: 0 };      // actuator rotation point (orange in CAD)
+  const Obase = { x: 2, y: -1 };    // base pivot for output arm
+  const Oupper = { x: -1, y: 6 };   // upper constraint pivot
 
-  // Actuator arm: short crank from O1
-  const crankLen = 3;
-  // At angle ~60° to start in a reasonable position
-  const startAngle = Math.PI * 0.35;
-  const Ax = O1x + crankLen * Math.cos(startAngle);
-  const Ay = O1y + crankLen * Math.sin(startAngle);
+  // Link lengths tuned for 160° input → ~20° output
+  const actuatorLen = 3;     // actuator arm (input crank)
+  const driveLen = 7;        // connecting arm A→B
+  const constraintLen = 4;   // constraint arm O_upper→B
+  const couplerLen = 2;      // short coupler B→C
+  const upperLen = 2.5;      // short link C→D
+  const outputLen = 10;      // long output arm O_base→D
 
-  // This is really a 5-bar with 2 ground pivots.
-  // For the solver: B needs two links to known joints.
-  // Solution: add a ternary link (link with 3 joints) or add a third ground.
-  //
-  // Simplest working approach: model as two nested 4-bars sharing joint B.
-  // Add a third ground pivot O3 so B is determined by (A, driveLen) and (O3, constraintLen).
-  const O3x = 2, O3y = 8;     // upper constraint pivot
+  // Start with actuator pointing down-right (~-20° from horizontal)
+  const startAngle = -Math.PI * 0.12;
+  const Ax = Oact.x + actuatorLen * Math.cos(startAngle);
+  const Ay = Oact.y + actuatorLen * Math.sin(startAngle);
 
-  // B = intersection of circle(A, driveLen) and circle(O3, constraintLen)
-  const driveLen = 9;
-  const constraintLen = 5;
+  // B near the top (solver computes exact)
+  const Bx = 1.5, By = 6.5;
 
-  // Compute B position
-  const Bx = 5, By = 8; // approximate — solver will compute exact
+  // D at end of output arm, pointing mostly up
+  const Dx = Obase.x - 1.5, Dy = Obase.y + outputLen - 2;
 
-  // D = on circle(O2, outputLen)
-  const outputLen = 8;
-  const Dx = O2x - 4, Dy = 7; // approximate
-
-  // C = between B and D: dist(B,C)=couplerLen, dist(D,C)=upperLen
-  const couplerLen = 4;
-  const upperLen = 3.5;
-  const Cx = (Bx + Dx) / 2, Cy = (By + Dy) / 2 + 1;
+  // C between B and D
+  const t = couplerLen / (couplerLen + upperLen);
+  const Cx = Bx + (Dx - Bx) * t, Cy = By + (Dy - By) * t;
 
   const joints = [
-    createJoint('O1', O1x, O1y, true),       // actuator ground
-    createJoint('A', Ax, Ay, false, true),     // actuator tip (input)
-    createJoint('B', Bx, By),                  // top of drive arm (shared)
-    createJoint('C', Cx, Cy),                  // coupler joint
-    createJoint('D', Dx, Dy),                  // output arm joint
-    createJoint('O2', O2x, O2y, true),        // output ground
-    createJoint('O3', O3x, O3y, true),        // upper constraint ground
+    createJoint('O_act', Oact.x, Oact.y, true),       // actuator ground (orange)
+    createJoint('A', Ax, Ay, false, true),              // actuator arm tip (input)
+    createJoint('B', Bx, By),                           // drive/constraint junction
+    createJoint('C', Cx, Cy),                           // coupler joint
+    createJoint('D', Dx, Dy),                           // output arm upper joint
+    createJoint('O_base', Obase.x, Obase.y, true),     // base ground pivot
+    createJoint('O_upper', Oupper.x, Oupper.y, true),  // upper constraint pivot
   ];
 
   const links = [
-    createLink('actuator', 'O1', 'A', crankLen),       // input crank
-    createLink('drive', 'A', 'B', driveLen),            // long drive arm
-    createLink('constraint', 'O3', 'B', constraintLen), // constraint from upper ground
-    createLink('coupler', 'B', 'C', couplerLen),        // coupler
-    createLink('upper', 'C', 'D', upperLen),            // upper arm
-    createLink('output', 'O2', 'D', outputLen),         // output arm
+    createLink('actuator', 'O_act', 'A', actuatorLen),     // input crank (blue in CAD)
+    createLink('drive', 'A', 'B', driveLen),                // long connecting arm
+    createLink('constraint', 'O_upper', 'B', constraintLen),// constraint arm
+    createLink('coupler', 'B', 'C', couplerLen),            // short coupler
+    createLink('upper_link', 'C', 'D', upperLen),           // short upper link
+    createLink('output', 'O_base', 'D', outputLen),         // long output arm
   ];
 
   const gravity = mass > 0 ? mass * 9.81 : 10 * 9.81;
-  const loads = [{ jointId: 'C', force: { x: 0, y: -gravity } }];
+  // Load at the top of the output arm (what the mechanism lifts)
+  const loads = [{ jointId: 'D', force: { x: 0, y: -gravity } }];
 
-  return createLinkage(joints, links, 'O1', 'A', crankLen, loads);
+  const linkage = createLinkage(joints, links, 'O_act', 'A', actuatorLen, loads);
+  linkage.inputAngle = startAngle; // start at the beginning of the 160° range
+  return linkage;
 }
 
 function createFourBarCrankRocker(mass: number): Linkage {

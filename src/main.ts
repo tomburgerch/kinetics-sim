@@ -92,12 +92,17 @@ function init(): void {
 }
 
 function handleControlChange(values: ControlValues): void {
+  let presetJustChanged = false;
   if (values.presetIndex !== currentPresetIndex || values.mass !== currentMass) {
-    const currentAngle = sim.running ? sim.linkage.inputAngle : values.angleRad;
+    const presetChanged = values.presetIndex !== currentPresetIndex;
+    presetJustChanged = presetChanged;
     currentPresetIndex = values.presetIndex;
     currentMass = values.mass;
     const newLinkage = presets[values.presetIndex].factory(values.mass);
-    newLinkage.inputAngle = currentAngle;
+    // When preset changes, use the preset's default angle; otherwise keep current
+    if (!presetChanged) {
+      newLinkage.inputAngle = sim.running ? sim.linkage.inputAngle : values.angleRad;
+    }
     sim.linkage = newLinkage;
     // Recompute traces if enabled
     if (values.showTraces || values.showGraphs) {
@@ -113,7 +118,11 @@ function handleControlChange(values: ControlValues): void {
   sim.rpm = values.rpm;
 
   if (!sim.running) {
-    sim.linkage.inputAngle = values.angleRad;
+    // Only set angle from slider if the user actually changed the slider
+    // (not from preset recreation which already set the correct angle)
+    if (!presetJustChanged) {
+      sim.linkage.inputAngle = values.angleRad;
+    }
     sim.solve();
   }
 }
