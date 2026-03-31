@@ -7,6 +7,7 @@ import { OutputPanel } from './ui/output-panel';
 import { Simulation } from './sim/animation';
 import { exportCSV } from './ui/export';
 import { GraphPanel } from './ui/graphs';
+import { showExplainer } from './ui/explainer';
 import { computeStress } from './ui/materials';
 import { PhotoImport } from './ui/photo-import';
 import type { PhotoJoint } from './ui/photo-import';
@@ -86,6 +87,8 @@ function init(): void {
     renderer.resize(canvas.width, canvas.height);
     if (!sim.running) sim.solve();
   });
+
+  showExplainer();
 }
 
 function handleControlChange(values: ControlValues): void {
