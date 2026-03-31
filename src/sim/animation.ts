@@ -3,11 +3,19 @@ import { solveLinkage } from '../math/solver';
 import { solveForces } from '../math/forces';
 import * as V from '../math/vec2';
 
+export interface TraceData {
+  paths: Map<string, Vec2[]>;
+  torques: { angle: number; torque: number }[];
+  forceHistory: Map<string, { angle: number; magnitude: number }[]>;
+}
+
 export class Simulation {
   linkage: Linkage;
   state: FullState;
   running: boolean = false;
   rpm: number = 15;
+  traces: TraceData = { paths: new Map(), torques: [], forceHistory: new Map() };
+  showTraces: boolean = false;
 
   private lastTime: number = 0;
   private prevPositions: Map<string, Vec2> | null = null;
@@ -29,11 +37,59 @@ export class Simulation {
     };
   }
 
+  computeTraces(steps: number = 360): void {
+    this.traces = { paths: new Map(), torques: [], forceHistory: new Map() };
+    const savedAngle = this.linkage.inputAngle;
+
+    for (const joint of this.linkage.joints) {
+      if (!joint.isGround) {
+        this.traces.paths.set(joint.id, []);
+        this.traces.forceHistory.set(joint.id, []);
+      }
+    }
+
+    for (let i = 0; i <= steps; i++) {
+      const angleRad = (i * 2 * Math.PI) / steps;
+      this.linkage.inputAngle = angleRad;
+      const result = solveLinkage(this.linkage);
+      if (!result.success) continue;
+
+      // Update positions for force solver
+      for (const joint of this.linkage.joints) {
+        const pos = result.positions.get(joint.id);
+        if (pos && !joint.isGround) joint.position = { ...pos };
+      }
+
+      const forces = solveForces(this.linkage, result.positions);
+      const angleDeg = (angleRad * 180) / Math.PI;
+
+      this.traces.torques.push({ angle: angleDeg, torque: forces.inputTorque });
+
+      for (const joint of this.linkage.joints) {
+        if (joint.isGround) continue;
+        const pos = result.positions.get(joint.id);
+        if (pos) {
+          this.traces.paths.get(joint.id)!.push({ ...pos });
+        }
+        const force = forces.jointForces.get(joint.id);
+        if (force) {
+          this.traces.forceHistory.get(joint.id)!.push({
+            angle: angleDeg,
+            magnitude: V.length(force),
+          });
+        }
+      }
+    }
+
+    this.linkage.inputAngle = savedAngle;
+    // Re-solve at current angle to restore state
+    this.solve();
+  }
+
   solve(): void {
     const result = solveLinkage(this.linkage);
 
     if (result.success) {
-      // Compute velocities from previous frame
       const velocities = new Map<string, Vec2>();
       for (const [id, pos] of result.positions) {
         if (this.prevPositions) {
@@ -48,7 +104,6 @@ export class Simulation {
         }
       }
 
-      // Update joint positions for force analysis
       for (const joint of this.linkage.joints) {
         const pos = result.positions.get(joint.id);
         if (pos && !joint.isGround) {
@@ -69,11 +124,6 @@ export class Simulation {
     }
 
     this.onUpdate(this.state);
-  }
-
-  setAngle(rad: number): void {
-    this.linkage.inputAngle = rad;
-    this.solve();
   }
 
   play(): void {
@@ -103,7 +153,6 @@ export class Simulation {
     const dt = (now - this.lastTime) / 1000;
     this.lastTime = now;
 
-    // Advance crank angle
     const dAngle = ((2 * Math.PI * this.rpm) / 60) * dt;
     this.linkage.inputAngle += dAngle;
 

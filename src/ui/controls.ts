@@ -7,11 +7,17 @@ export interface ControlValues {
   rpm: number;
   showForces: boolean;
   showLabels: boolean;
+  showTraces: boolean;
+  showGraphs: boolean;
   forceScale: number;
+  // Material properties
+  material: string;
+  crossSection: string;
+  sectionSize: number; // mm
 }
 
 export type OnChangeCallback = (values: ControlValues) => void;
-export type OnActionCallback = (action: 'play' | 'pause' | 'reset' | 'export') => void;
+export type OnActionCallback = (action: string) => void;
 
 export class ControlsPanel {
   private container: HTMLElement;
@@ -23,13 +29,18 @@ export class ControlsPanel {
   private isPlaying: boolean = false;
 
   values: ControlValues = {
-    presetIndex: 3, // "4-Bar with Hanging Load" - Evan's mechanism
+    presetIndex: 3,
     mass: 5,
     angleRad: 0,
     rpm: 15,
     showForces: true,
     showLabels: true,
+    showTraces: false,
+    showGraphs: false,
     forceScale: 0.05,
+    material: 'steel',
+    crossSection: 'round_solid',
+    sectionSize: 20,
   };
 
   constructor(
@@ -54,23 +65,19 @@ export class ControlsPanel {
     // Preset selector
     this.addSection('Mechanism', (section) => {
       const select = this.addSelect(
-        section,
-        'Preset',
+        section, 'Preset',
         presets.map((p) => p.name),
         this.values.presetIndex
       );
-      select.addEventListener('change', () => {
-        this.values.presetIndex = parseInt(select.value);
-        this.fireChange();
-      });
-
       const desc = document.createElement('p');
       desc.className = 'preset-desc';
       desc.textContent = presets[this.values.presetIndex].description;
       section.appendChild(desc);
 
       select.addEventListener('change', () => {
-        desc.textContent = presets[parseInt(select.value)].description;
+        this.values.presetIndex = parseInt(select.value);
+        desc.textContent = presets[this.values.presetIndex].description;
+        this.fireChange();
       });
     });
 
@@ -137,6 +144,31 @@ export class ControlsPanel {
       section.appendChild(btnRow);
     });
 
+    // Material / Stress
+    this.addSection('Material & Stress', (section) => {
+      const matSelect = this.addSelect(section, 'Material', [
+        'Steel (A36)', 'Aluminum (6061-T6)', 'Stainless (304)', 'Titanium (Ti-6Al-4V)'
+      ], 0);
+      matSelect.addEventListener('change', () => {
+        this.values.material = ['steel', 'aluminum', 'stainless', 'titanium'][parseInt(matSelect.value)];
+        this.fireChange();
+      });
+
+      const csSelect = this.addSelect(section, 'Cross-section', [
+        'Round Solid', 'Round Tube', 'Square Solid', 'Flat Bar'
+      ], 0);
+      csSelect.addEventListener('change', () => {
+        this.values.crossSection = ['round_solid', 'round_tube', 'square_solid', 'flat_bar'][parseInt(csSelect.value)];
+        this.fireChange();
+      });
+
+      const sizeInput = this.addNumberInput(section, 'Size (mm)', this.values.sectionSize, 1, 200, 1);
+      sizeInput.addEventListener('input', () => {
+        this.values.sectionSize = parseFloat(sizeInput.value) || 20;
+        this.fireChange();
+      });
+    });
+
     // Display options
     this.addSection('Display', (section) => {
       const forcesCheck = this.addCheckbox(section, 'Show Forces', this.values.showForces);
@@ -151,6 +183,20 @@ export class ControlsPanel {
         this.fireChange();
       });
 
+      const tracesCheck = this.addCheckbox(section, 'Show Traces', this.values.showTraces);
+      tracesCheck.addEventListener('change', () => {
+        this.values.showTraces = tracesCheck.checked;
+        this.onAction('toggleTraces');
+        this.fireChange();
+      });
+
+      const graphsCheck = this.addCheckbox(section, 'Show Graphs', this.values.showGraphs);
+      graphsCheck.addEventListener('change', () => {
+        this.values.showGraphs = graphsCheck.checked;
+        this.onAction('toggleGraphs');
+        this.fireChange();
+      });
+
       const scaleInput = this.addNumberInput(section, 'Force Scale', this.values.forceScale, 0.001, 1, 0.001);
       scaleInput.addEventListener('input', () => {
         this.values.forceScale = parseFloat(scaleInput.value) || 0.01;
@@ -158,13 +204,27 @@ export class ControlsPanel {
       });
     });
 
-    // Export
-    this.addSection('Data Export', (section) => {
+    // Export & Tools
+    this.addSection('Tools', (section) => {
       const exportBtn = document.createElement('button');
       exportBtn.className = 'btn btn-export';
       exportBtn.textContent = '📊 Export CSV (Full Sweep)';
       exportBtn.addEventListener('click', () => this.onAction('export'));
       section.appendChild(exportBtn);
+
+      const importBtn = document.createElement('button');
+      importBtn.className = 'btn btn-import';
+      importBtn.textContent = '📷 Import from Photo';
+      importBtn.style.marginTop = '8px';
+      importBtn.addEventListener('click', () => this.onAction('importPhoto'));
+      section.appendChild(importBtn);
+
+      const buildBtn = document.createElement('button');
+      buildBtn.className = 'btn btn-build';
+      buildBtn.textContent = '🔧 Custom Linkage Builder';
+      buildBtn.style.marginTop = '8px';
+      buildBtn.addEventListener('click', () => this.onAction('customBuilder'));
+      section.appendChild(buildBtn);
     });
 
     // Help
@@ -197,12 +257,7 @@ export class ControlsPanel {
     this.container.appendChild(section);
   }
 
-  private addSelect(
-    parent: HTMLElement,
-    label: string,
-    options: string[],
-    selected: number
-  ): HTMLSelectElement {
+  private addSelect(parent: HTMLElement, label: string, options: string[], selected: number): HTMLSelectElement {
     const row = document.createElement('div');
     row.className = 'input-row';
     row.innerHTML = `<label>${label}</label>`;
@@ -219,14 +274,7 @@ export class ControlsPanel {
     return select;
   }
 
-  private addNumberInput(
-    parent: HTMLElement,
-    label: string,
-    value: number,
-    min: number,
-    max: number,
-    step: number
-  ): HTMLInputElement {
+  private addNumberInput(parent: HTMLElement, label: string, value: number, min: number, max: number, step: number): HTMLInputElement {
     const row = document.createElement('div');
     row.className = 'input-row';
     row.innerHTML = `<label>${label}</label>`;
@@ -241,11 +289,7 @@ export class ControlsPanel {
     return input;
   }
 
-  private addCheckbox(
-    parent: HTMLElement,
-    label: string,
-    checked: boolean
-  ): HTMLInputElement {
+  private addCheckbox(parent: HTMLElement, label: string, checked: boolean): HTMLInputElement {
     const row = document.createElement('div');
     row.className = 'input-row checkbox-row';
     const input = document.createElement('input');

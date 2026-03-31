@@ -1,4 +1,5 @@
 import type { Linkage, FullState } from '../types';
+import type { StressResult } from './materials';
 import * as V from '../math/vec2';
 
 export class OutputPanel {
@@ -6,6 +7,7 @@ export class OutputPanel {
   private tableBody!: HTMLTableSectionElement;
   private torqueEl!: HTMLElement;
   private statusEl!: HTMLElement;
+  private stressEl!: HTMLElement;
 
   constructor(container: HTMLElement) {
     this.container = container;
@@ -42,11 +44,16 @@ export class OutputPanel {
         <h3>Link Summary</h3>
         <div id="link-summary"></div>
       </div>
+      <div class="stress-section">
+        <h3>Stress Analysis</h3>
+        <div id="stress-results"></div>
+      </div>
     `;
 
     this.tableBody = this.container.querySelector('#data-tbody')!;
     this.torqueEl = this.container.querySelector('#torque-display')!;
     this.statusEl = this.container.querySelector('#sim-status')!;
+    this.stressEl = this.container.querySelector('#stress-results')!;
   }
 
   update(linkage: Linkage, state: FullState): void {
@@ -95,7 +102,6 @@ export class OutputPanel {
       const actualLen = p1 && p2 ? V.distance(p1, p2) : 0;
 
       const f1 = state.forces?.jointForces.get(link.jointIds[0]);
-      // Axial force along the link
       let axialForce = 0;
       if (p1 && p2 && f1) {
         const dir = V.normalize(V.sub(p2, p1));
@@ -114,5 +120,27 @@ export class OutputPanel {
       `;
     }
     summaryEl.innerHTML = summaryHtml;
+  }
+
+  updateStress(results: StressResult[]): void {
+    let html = '';
+    for (const r of results) {
+      const statusClass = r.status === 'safe' ? 'stress-safe' : r.status === 'warning' ? 'stress-warning' : 'stress-danger';
+      const statusIcon = r.status === 'safe' ? '✓' : r.status === 'warning' ? '⚠' : '✗';
+      html += `
+        <div class="stress-card ${statusClass}">
+          <div class="stress-link-name">${r.linkId}</div>
+          <div class="stress-row">
+            <span>Axial: ${r.axialStress.toFixed(2)} MPa</span>
+            <span>Bend: ${r.bendingStress.toFixed(2)} MPa</span>
+          </div>
+          <div class="stress-row">
+            <span>Combined: ${r.combinedStress.toFixed(2)} MPa</span>
+            <span class="stress-sf">${statusIcon} SF: ${r.safetyFactor > 99 ? '99+' : r.safetyFactor.toFixed(1)}</span>
+          </div>
+        </div>
+      `;
+    }
+    this.stressEl.innerHTML = html;
   }
 }

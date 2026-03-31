@@ -1,4 +1,5 @@
 import type { Linkage, FullState, Vec2 } from '../types';
+import type { TraceData } from '../sim/animation';
 import { CoordinateSystem } from './coordinate-system';
 import * as V from '../math/vec2';
 
@@ -29,6 +30,8 @@ export class CanvasRenderer {
   showForces: boolean = true;
   showLabels: boolean = true;
   showGrid: boolean = true;
+  showTraces: boolean = false;
+  traces: TraceData | null = null;
 
   private canvas: HTMLCanvasElement;
   private coords: CoordinateSystem;
@@ -261,9 +264,37 @@ export class CanvasRenderer {
     );
   }
 
+  drawTracePaths(): void {
+    if (!this.showTraces || !this.traces) return;
+    const ctx = this.ctx;
+    const TRACE_COLORS = ['#22c55e80', '#3b82f680', '#f59e0b80', '#a855f780', '#06b6d480', '#ec489980'];
+    let colorIdx = 0;
+
+    for (const [_jointId, path] of this.traces.paths) {
+      if (path.length < 2) continue;
+      ctx.strokeStyle = TRACE_COLORS[colorIdx % TRACE_COLORS.length];
+      ctx.lineWidth = 2;
+      ctx.setLineDash([4, 2]);
+      ctx.beginPath();
+      const start = this.coords.worldToScreen(path[0]);
+      ctx.moveTo(start.x, start.y);
+      for (let i = 1; i < path.length; i++) {
+        const p = this.coords.worldToScreen(path[i]);
+        ctx.lineTo(p.x, p.y);
+      }
+      ctx.closePath();
+      ctx.stroke();
+      ctx.setLineDash([]);
+      colorIdx++;
+    }
+  }
+
   drawLinkage(linkage: Linkage, state: FullState): void {
     this.clear();
     this.drawGrid();
+
+    // Draw trace paths behind everything
+    this.drawTracePaths();
 
     const positions = state.positions;
 

@@ -1,18 +1,18 @@
 import type { Vec2 } from '../types';
 
 export class CoordinateSystem {
-  scale: number = 35; // pixels per unit
+  scale: number = 35;
   offsetX: number = 0;
   offsetY: number = 0;
   width: number = 800;
   height: number = 600;
+  onViewChange: (() => void) | null = null;
 
   private isPanning: boolean = false;
   private panStartX: number = 0;
   private panStartY: number = 0;
   private panStartOffX: number = 0;
   private panStartOffY: number = 0;
-
   private canvas: HTMLCanvasElement;
 
   constructor(canvas: HTMLCanvasElement) {
@@ -23,8 +23,8 @@ export class CoordinateSystem {
 
     canvas.addEventListener('wheel', (e) => this.onWheel(e), { passive: false });
     canvas.addEventListener('mousedown', (e) => this.onMouseDown(e));
-    canvas.addEventListener('mousemove', (e) => this.onMouseMove(e));
-    canvas.addEventListener('mouseup', () => this.onMouseUp());
+    window.addEventListener('mousemove', (e) => this.onMouseMove(e));
+    window.addEventListener('mouseup', () => this.onMouseUp());
   }
 
   centerOn(worldPos: Vec2): void {
@@ -46,6 +46,10 @@ export class CoordinateSystem {
     };
   }
 
+  private notifyChange(): void {
+    if (this.onViewChange) this.onViewChange();
+  }
+
   private onWheel(e: WheelEvent): void {
     e.preventDefault();
     const rect = this.canvas.getBoundingClientRect();
@@ -58,9 +62,9 @@ export class CoordinateSystem {
     this.scale *= zoomFactor;
     this.scale = Math.max(5, Math.min(200, this.scale));
 
-    // Keep world point under cursor
     this.offsetX = mouseX - worldBefore.x * this.scale;
     this.offsetY = mouseY + worldBefore.y * this.scale;
+    this.notifyChange();
   }
 
   private onMouseDown(e: MouseEvent): void {
@@ -78,6 +82,7 @@ export class CoordinateSystem {
     if (this.isPanning) {
       this.offsetX = this.panStartOffX + (e.clientX - this.panStartX);
       this.offsetY = this.panStartOffY + (e.clientY - this.panStartY);
+      this.notifyChange();
     }
   }
 
