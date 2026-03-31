@@ -23,7 +23,7 @@ let controls: ControlsPanel;
 let output: OutputPanel;
 let graphs: GraphPanel;
 
-let currentPresetIndex = 3;
+let currentPresetIndex = 0;
 let currentMass = 5;
 
 function init(): void {

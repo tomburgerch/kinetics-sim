@@ -196,45 +196,51 @@ export function solveLinkage(linkage: Linkage): SolverResult {
       const unknownId = has1 ? id2 : id1;
       const knownPos = positions.get(knownId)!;
 
-      // Find another link connected to the unknown joint that has a known endpoint
-      const otherLink = linkage.links.find(
-        (l) =>
-          l.id !== link.id &&
-          (l.jointIds[0] === unknownId || l.jointIds[1] === unknownId)
-      );
+      // Find another link connected to the unknown joint that has a known (solved) endpoint
+      let foundSolution = false;
+      for (const otherLink of linkage.links) {
+        if (otherLink.id === link.id) continue;
+        if (otherLink.jointIds[0] !== unknownId && otherLink.jointIds[1] !== unknownId) continue;
 
-      if (!otherLink) continue;
+        const otherEndId =
+          otherLink.jointIds[0] === unknownId
+            ? otherLink.jointIds[1]
+            : otherLink.jointIds[0];
 
-      const otherEndId =
-        otherLink.jointIds[0] === unknownId
-          ? otherLink.jointIds[1]
-          : otherLink.jointIds[0];
+        if (!solved.has(otherEndId)) continue;
 
-      if (!solved.has(otherEndId)) continue;
+        const otherPos = positions.get(otherEndId)!;
 
-      const otherPos = positions.get(otherEndId)!;
+        // Two-circle intersection
+        const result = circleCircleIntersection(
+          knownPos,
+          link.length,
+          otherPos,
+          otherLink.length
+        );
 
-      // Two-circle intersection
-      const result = circleCircleIntersection(
-        knownPos,
-        link.length,
-        otherPos,
-        otherLink.length
-      );
-
-      if (result) {
-        // Pick the solution that maintains mechanism configuration
-        const joint = linkage.joints.find((j) => j.id === unknownId);
-        if (joint && joint.position) {
-          const d1 = V.distance(result[0], joint.position);
-          const d2 = V.distance(result[1], joint.position);
-          positions.set(unknownId, d1 <= d2 ? result[0] : result[1]);
-        } else {
-          positions.set(unknownId, result[0]);
+        if (result) {
+          // Pick the solution that maintains mechanism configuration
+          const joint = linkage.joints.find((j) => j.id === unknownId);
+          if (joint && joint.position) {
+            const d1 = V.distance(result[0], joint.position);
+            const d2 = V.distance(result[1], joint.position);
+            positions.set(unknownId, d1 <= d2 ? result[0] : result[1]);
+          } else {
+            positions.set(unknownId, result[0]);
+          }
+          solved.add(unknownId);
+          progress = true;
+          foundSolution = true;
+          break;
         }
-        solved.add(unknownId);
-        progress = true;
       }
+      if (foundSolution) continue;
+    }
+
+    // If no single-joint progress, try dyad solving (two unsolved joints connected by a link)
+    if (!progress) {
+      progress = solveDyad(linkage, positions, solved);
     }
 
     if (!progress) break;
@@ -246,6 +252,112 @@ export function solveLinkage(linkage: Linkage): SolverResult {
     success,
     error: success ? undefined : 'Could not solve all joint positions',
   };
+}
+
+/**
+ * Dyad solver: solve two unsolved joints (P, Q) simultaneously where:
+ *   P is connected to a known joint K1 by link1 (length L1)
+ *   Q is connected to a known joint K2 by link2 (length L2)
+ *   P and Q are connected to each other by linkPQ (length LPQ)
+ *
+ * This is a 2-circle + distance constraint problem.
+ * P lies on circle(K1, L1), Q lies on circle(K2, L2), dist(P,Q) = LPQ
+ *
+ * Approach: sweep P around circle(K1, L1), for each P compute Q as
+ * intersection of circle(P, LPQ) and circle(K2, L2). Pick the solution
+ * closest to initial positions.
+ */
+function solveDyad(
+  linkage: { joints: { id: string; position: Vec2; isGround: boolean; isInput: boolean }[]; links: { id: string; jointIds: [string, string]; length: number }[] },
+  positions: Map<string, Vec2>,
+  solved: Set<string>
+): boolean {
+  // Find unsolved joint pairs connected by a link
+  for (const linkPQ of linkage.links) {
+    const [pId, qId] = linkPQ.jointIds;
+    if (solved.has(pId) || solved.has(qId)) continue;
+    // Both P and Q are unsolved, connected by linkPQ
+
+    // Find a link from P to a solved joint
+    let k1Id: string | null = null;
+    let linkPK1Length = 0;
+    for (const l of linkage.links) {
+      if (l.id === linkPQ.id) continue;
+      let otherId: string | null = null;
+      if (l.jointIds[0] === pId) otherId = l.jointIds[1];
+      else if (l.jointIds[1] === pId) otherId = l.jointIds[0];
+      if (otherId && solved.has(otherId)) {
+        k1Id = otherId;
+        linkPK1Length = l.length;
+        break;
+      }
+    }
+    if (!k1Id) continue;
+
+    // Find a link from Q to a solved joint
+    let k2Id: string | null = null;
+    let linkQK2Length = 0;
+    for (const l of linkage.links) {
+      if (l.id === linkPQ.id) continue;
+      let otherId: string | null = null;
+      if (l.jointIds[0] === qId) otherId = l.jointIds[1];
+      else if (l.jointIds[1] === qId) otherId = l.jointIds[0];
+      if (otherId && solved.has(otherId)) {
+        k2Id = otherId;
+        linkQK2Length = l.length;
+        break;
+      }
+    }
+    if (!k2Id) continue;
+
+    // We have: P on circle(K1, linkPK1Length), Q on circle(K2, linkQK2Length), dist(P,Q) = linkPQ.length
+    const k1Pos = positions.get(k1Id)!;
+    const k2Pos = positions.get(k2Id)!;
+    const pqLen = linkPQ.length;
+
+    const pJoint = linkage.joints.find((j) => j.id === pId);
+    const qJoint = linkage.joints.find((j) => j.id === qId);
+    const pInit = pJoint?.position || { x: 0, y: 0 };
+    const qInit = qJoint?.position || { x: 0, y: 0 };
+
+    // Sweep P around its circle and find valid (P, Q) pairs
+    let bestP: Vec2 | null = null;
+    let bestQ: Vec2 | null = null;
+    let bestDist = Infinity;
+
+    const steps = 360;
+    for (let i = 0; i < steps; i++) {
+      const angle = (2 * Math.PI * i) / steps;
+      const pCandidate: Vec2 = {
+        x: k1Pos.x + linkPK1Length * Math.cos(angle),
+        y: k1Pos.y + linkPK1Length * Math.sin(angle),
+      };
+
+      // Q must be at intersection of circle(pCandidate, pqLen) and circle(K2, linkQK2Length)
+      const qResult = circleCircleIntersection(pCandidate, pqLen, k2Pos, linkQK2Length);
+      if (!qResult) continue;
+
+      // Pick the Q closest to initial position
+      for (const qCandidate of qResult) {
+        const d = V.distance(pCandidate, pInit) + V.distance(qCandidate, qInit);
+        if (d < bestDist) {
+          bestDist = d;
+          bestP = pCandidate;
+          bestQ = qCandidate;
+        }
+      }
+    }
+
+    if (bestP && bestQ) {
+      positions.set(pId, bestP);
+      positions.set(qId, bestQ);
+      solved.add(pId);
+      solved.add(qId);
+      return true;
+    }
+  }
+
+  return false;
 }
 
 function circleCircleIntersection(

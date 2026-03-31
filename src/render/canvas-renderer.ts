@@ -264,6 +264,60 @@ export class CanvasRenderer {
     );
   }
 
+  drawTorqueArc(center: Vec2, angle: number, torque: number, crankLen: number): void {
+    if (!this.showForces || Math.abs(torque) < 0.01) return;
+    const ctx = this.ctx;
+    const sc = this.coords.worldToScreen(center);
+    const r = crankLen * this.coords.scale * 0.6;
+
+    // Torque direction: positive = CCW
+    const arcLength = Math.min(Math.abs(torque) * 0.02, 1.2); // radians, capped
+    const startAngle = -angle; // screen coordinates (Y flipped)
+    const endAngle = startAngle + (torque > 0 ? -arcLength : arcLength);
+    const ccw = torque > 0;
+
+    // Arc
+    ctx.strokeStyle = '#f59e0b';
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.arc(sc.x, sc.y, r, startAngle, endAngle, ccw);
+    ctx.stroke();
+
+    // Arrowhead at end of arc
+    const tipAngle = endAngle;
+    const tipX = sc.x + Math.cos(tipAngle) * r;
+    const tipY = sc.y + Math.sin(tipAngle) * r;
+
+    const tangentAngle = tipAngle + (ccw ? -Math.PI / 2 : Math.PI / 2);
+    const arrowSize = 8;
+    const perpAngle = tangentAngle + Math.PI / 2;
+
+    ctx.fillStyle = '#f59e0b';
+    ctx.beginPath();
+    ctx.moveTo(tipX, tipY);
+    ctx.lineTo(
+      tipX - Math.cos(tangentAngle) * arrowSize + Math.cos(perpAngle) * arrowSize * 0.4,
+      tipY - Math.sin(tangentAngle) * arrowSize + Math.sin(perpAngle) * arrowSize * 0.4
+    );
+    ctx.lineTo(
+      tipX - Math.cos(tangentAngle) * arrowSize - Math.cos(perpAngle) * arrowSize * 0.4,
+      tipY - Math.sin(tangentAngle) * arrowSize - Math.sin(perpAngle) * arrowSize * 0.4
+    );
+    ctx.closePath();
+    ctx.fill();
+
+    // Torque label
+    const labelAngle = (startAngle + endAngle) / 2;
+    const labelR = r + 18;
+    const lx = sc.x + Math.cos(labelAngle) * labelR;
+    const ly = sc.y + Math.sin(labelAngle) * labelR;
+
+    ctx.fillStyle = '#f59e0b';
+    ctx.font = 'bold 11px monospace';
+    ctx.textAlign = 'center';
+    ctx.fillText(`${torque.toFixed(1)} N·m`, lx, ly);
+  }
+
   drawTracePaths(): void {
     if (!this.showTraces || !this.traces) return;
     const ctx = this.ctx;
@@ -345,6 +399,16 @@ export class CanvasRenderer {
           this.drawForceArrow(pos, force, COLORS.forceArrow);
         }
       }
+    }
+
+    // Draw input torque arc on the crank pivot
+    if (crankPivot && state.forces) {
+      this.drawTorqueArc(
+        crankPivot.position,
+        linkage.inputAngle,
+        state.forces.inputTorque,
+        linkage.crankLength
+      );
     }
 
     // Draw info overlay

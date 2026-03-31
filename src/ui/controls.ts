@@ -29,7 +29,7 @@ export class ControlsPanel {
   private isPlaying: boolean = false;
 
   values: ControlValues = {
-    presetIndex: 3,
+    presetIndex: 0,
     mass: 5,
     angleRad: 0,
     rpm: 15,
