@@ -10,7 +10,7 @@ import { GraphPanel } from './ui/graphs';
 import { showExplainer } from './ui/explainer';
 import { computeStress } from './ui/materials';
 import { PhotoImport } from './ui/photo-import';
-import type { PhotoJoint } from './ui/photo-import';
+import type { PhotoImportResult } from './ui/photo-import';
 import { CustomBuilder } from './ui/custom-builder';
 import { createJoint, createLink, createLinkage } from './model/linkage';
 import * as V from './math/vec2';
@@ -154,8 +154,8 @@ function handleAction(action: string): void {
       }
       break;
     case 'importPhoto': {
-      const importer = new PhotoImport((joints: PhotoJoint[], scale: number) => {
-        applyPhotoImport(joints, scale);
+      const importer = new PhotoImport((result: PhotoImportResult) => {
+        applyPhotoImport(result);
       });
       importer.open();
       break;
@@ -175,37 +175,46 @@ function handleAction(action: string): void {
   }
 }
 
-function applyPhotoImport(photoJoints: PhotoJoint[], _scale: number): void {
-  if (photoJoints.length < 3) return;
+function applyPhotoImport(result: PhotoImportResult): void {
+  const { joints: photoJoints, links: photoLinks } = result;
+  if (photoJoints.length < 3 || photoLinks.length < 2) return;
 
   const groundJoints = photoJoints.filter((j) => j.isGround);
   const crankPivot = groundJoints[0] || photoJoints[0];
-  const inputJoint = photoJoints.find((j) => !j.isGround) || photoJoints[1];
+
+  // Find first moving joint connected to a ground pivot via a link
+  let inputJoint = photoJoints.find((j) => !j.isGround) || photoJoints[1];
+  for (const pl of photoLinks) {
+    if (pl.from === crankPivot.id) {
+      const target = photoJoints.find((j) => j.id === pl.to && !j.isGround);
+      if (target) { inputJoint = target; break; }
+    }
+    if (pl.to === crankPivot.id) {
+      const target = photoJoints.find((j) => j.id === pl.from && !j.isGround);
+      if (target) { inputJoint = target; break; }
+    }
+  }
 
   const joints = photoJoints.map((j) =>
     createJoint(j.id, j.worldPos.x, j.worldPos.y, j.isGround, j.id === inputJoint.id)
   );
 
-  // Auto-connect sequential joints as links
-  const links = [];
-  for (let i = 0; i < photoJoints.length - 1; i++) {
-    const p1 = photoJoints[i];
-    const p2 = photoJoints[i + 1];
-    const length = V.distance(p1.worldPos, p2.worldPos);
-    links.push(createLink(`L${i}`, p1.id, p2.id, length));
-  }
-  // Close the loop
-  if (photoJoints.length >= 3) {
-    const last = photoJoints[photoJoints.length - 1];
-    const first = photoJoints[0];
-    links.push(createLink(`L${photoJoints.length - 1}`, last.id, first.id, V.distance(last.worldPos, first.worldPos)));
-  }
+  const links = photoLinks.map((pl, i) => {
+    const j1 = photoJoints.find((j) => j.id === pl.from)!;
+    const j2 = photoJoints.find((j) => j.id === pl.to)!;
+    const length = V.distance(j1.worldPos, j2.worldPos);
+    return createLink(`L${i}`, pl.from, pl.to, length);
+  });
 
   const crankLength = V.distance(crankPivot.worldPos, inputJoint.worldPos);
   const linkage = createLinkage(joints, links, crankPivot.id, inputJoint.id, crankLength);
 
   sim.linkage = linkage;
   sim.solve();
+  if (controls.values.showTraces || controls.values.showGraphs) {
+    sim.computeTraces();
+    renderer.traces = sim.traces;
+  }
 }
 
 function resizeCanvas(canvas: HTMLCanvasElement): void {
